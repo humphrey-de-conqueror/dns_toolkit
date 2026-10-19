@@ -34,6 +34,7 @@ class AddRecordScreen(ModalScreen[DNSRecord | None]):
                 border: round $primary;
                 background: $surface;
                 padding: 1 2;
+                overflow-y: auto;
         }
 
         #dialog-title {

@@ -46,6 +46,7 @@ class DNSToolkitApp(App[None]):
         #content {
                 width: 1fr;
                 padding: 1 2;
+                overflow-y: auto;
         }
 
         .section-title {
