@@ -472,3 +472,12 @@ class DNSToolkitApp(App[None]):
                         title="Zone Deleted",
                 )
 
+        def on_data_table_row_selected(
+                self,
+                event: DataTable.RowSelected,
+        ) -> None:
+                if event.data_table.id != "zone-table":
+                        return
+
+                self._open_zone_details_screen()
+
