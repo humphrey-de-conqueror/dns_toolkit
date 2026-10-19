@@ -69,19 +69,32 @@ class AddRecordScreen(ModalScreen[DNSRecord | None]):
                 ("escape", "cancel", "Cancel"),
         ]
 
-        def __init__(self, zone: Zone) -> None:
+
+        def __init__(
+                self,
+                zone: Zone,
+                record: DNSRecord | None = None,
+        ) -> None:
                 super().__init__()
                 self.zone = zone
+                self.record = record
+                self.is_editing = record is not None
+
 
         def compose(self) -> ComposeResult:
                 with Vertical(id="dialog"):
                         yield Static(
-                                f"Add Record — {self.zone.name}",
+                                (
+                                        f"Edit Record — {self.zone.name}"
+                                        if self.is_editing
+                                        else f"Add Record — {self.zone.name}"
+                                ),
                                 id="dialog-title",
                         )
 
                         yield Label("Record name", classes="field-label")
                         yield Input(
+                                value=self.record.name if self.record else "",
                                 placeholder="@ or www",
                                 id="record-name",
                         )
@@ -96,19 +109,24 @@ class AddRecordScreen(ModalScreen[DNSRecord | None]):
                                         ("NS — Nameserver", "NS"),
                                         ("TXT — Text value", "TXT"),
                                 ],
-                                value="A",
+                                value=(
+                                        self.record.record_type
+                                        if self.record
+                                        else "A"
+                                ),
                                 id="record-type",
                         )
 
                         yield Label("Record value", classes="field-label")
                         yield Input(
+                                value=self.record.value if self.record else "",
                                 placeholder="192.0.2.10",
                                 id="record-value",
                         )
 
                         yield Label("TTL in seconds", classes="field-label")
                         yield Input(
-                                value="3600",
+                                value=str(self.record.ttl) if self.record else "3600",
                                 placeholder="3600",
                                 id="record-ttl",
                         )
@@ -118,7 +136,7 @@ class AddRecordScreen(ModalScreen[DNSRecord | None]):
                         with Horizontal(id="form-actions"):
                                 yield Button("Cancel", id="cancel")
                                 yield Button(
-                                        "Add Record",
+                                        "Save Changes" if self.is_editing else "Add Record",
                                         variant="primary",
                                         id="create-record",
                                 )

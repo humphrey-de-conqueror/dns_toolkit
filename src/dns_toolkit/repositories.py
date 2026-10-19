@@ -136,6 +136,62 @@ class ZoneRepository:
                 return True
 
 
+        def update_record(
+                self,
+                zone_name: str,
+                old_record: DNSRecord,
+                new_record: DNSRecord,
+        ) -> None:
+                key = self._normalize_name(zone_name)
+                existing_zone = self._zones.get(key)
+
+                if existing_zone is None:
+                        raise ValueError(f"Zone does not exist: {zone_name}")
+
+                record_index = next(
+                        (
+                                index
+                                for index, record
+                                in enumerate(existing_zone.records)
+                                if record == old_record
+                        ),
+                        None,
+                )
+
+                if record_index is None:
+                        raise ValueError("The original record no longer exists.")
+
+                for index, record in enumerate(existing_zone.records):
+                        if index == record_index:
+                                continue
+
+                        if (
+                                record.name.lower() == new_record.name.lower()
+                                and record.record_type == new_record.record_type
+                                and record.value == new_record.value
+                        ):
+                                raise ValueError(
+                                        "An identical record already exists."
+                                )
+
+                updated_records = list(existing_zone.records)
+                updated_records[record_index] = new_record
+
+                updated_zone = Zone(
+                        name=existing_zone.name,
+                        nameserver=existing_zone.nameserver,
+                        admin_email=existing_zone.admin_email,
+                        zone_type=existing_zone.zone_type,
+                        records=updated_records,
+                )
+
+                updated_zones = self._zones.copy()
+                updated_zones[key] = updated_zone
+
+                self._save_zones(updated_zones)
+                self._zones = updated_zones
+
+
         def _load_zones(self) -> None:
                 if not self._storage_path.exists():
                         return
