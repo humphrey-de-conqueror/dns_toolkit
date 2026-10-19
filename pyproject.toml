@@ -1,0 +1,22 @@
+[project]
+name = "dns-toolkit"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "dnspython>=2.9.0",
+    "textual>=8.2.8",
+]
+
+[project.scripts]
+dns-toolkit = "dns_toolkit:main"
+
+[build-system]
+requires = ["uv_build>=0.11.7,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "ruff>=0.17.1",
+]
