@@ -1,0 +1,136 @@
+
+Screen {
+        background: $surface;
+}
+
+#app-layout {
+        height: 100%;
+        width: 100%;
+}
+
+#sidebar {
+        width: 26;
+        min-width: 22;
+        height: 100%;
+        padding: 1;
+        background: $panel;
+        border-right: solid $primary;
+}
+
+#brand {
+        height: 3;
+        content-align: center middle;
+        text-style: bold;
+        color: $text;
+        margin-bottom: 1;
+}
+
+#sidebar Button {
+        width: 100%;
+        margin-bottom: 1;
+}
+
+#sidebar-footer {
+        height: 3;
+        content-align: center middle;
+        color: $text-muted;
+        margin-top: 1;
+}
+
+#main-content {
+        width: 1fr;
+        height: 100%;
+        padding: 2 3;
+}
+
+#page-heading {
+        height: 3;
+        content-align: left middle;
+        text-style: bold;
+        color: $text;
+        border-bottom: solid $primary;
+        margin-bottom: 2;
+}
+
+#dashboard-message,
+#dashboard-target,
+#dashboard-service,
+#dashboard-zones,
+#dashboard-tools {
+        height: auto;
+        min-height: 3;
+        padding: 1;
+        margin-bottom: 1;
+        border: round $primary;
+}
+
+.page-title {
+        height: 3;
+        content-align: left middle;
+        text-style: bold;
+        border-bottom: solid $primary;
+        margin-bottom: 1;
+}
+
+#zones-page,
+#records-page,
+#deployment-page,
+#target-page,
+#diagnostics,
+#settings {
+        height: 100%;
+        padding: 1 2;
+}
+
+DataTable {
+        height: 1fr;
+        margin-bottom: 1;
+}
+
+Input {
+        margin-bottom: 1;
+}
+
+Checkbox {
+        margin: 1 0;
+}
+
+#deployment-status,
+#target-status,
+#settings-message {
+        height: auto;
+        min-height: 3;
+        margin: 1 0;
+        padding: 1;
+        border: round $primary;
+}
+
+#zones-page Horizontal {
+        height: auto;
+        align: left middle;
+}
+
+#zones-page Horizontal Button {
+        width: 1fr;
+        margin-right: 1;
+}
+
+#export-page {
+        height: 100%;
+        padding: 1 2;
+}
+
+#export-page Select,
+#export-page Input,
+#export-page Button {
+        width: 100%;
+        margin-bottom: 1;
+}
+
+#export-status {
+        height: auto;
+        min-height: 3;
+        padding: 1;
+        margin-top: 1;
+        border: round $primary;
+}

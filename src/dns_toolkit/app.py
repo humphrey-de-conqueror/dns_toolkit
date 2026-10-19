@@ -1,524 +1,220 @@
 
+from pathlib import Path
+
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import (
-        Button,
-        DataTable,
-        Footer,
-        Header,
-        Label,
-        ListItem,
-        ListView,
-        Static,
-)
+from textual.widgets import Button, Static
 
-from dns_toolkit.models import DNSRecord, Zone
+from dns_toolkit.deployment.local_bind import LocalBindBackend
 from dns_toolkit.repositories import ZoneRepository
-from dns_toolkit.ui.add_record_screen import AddRecordScreen
-from dns_toolkit.ui.add_zone_screen import AddZoneScreen
-from dns_toolkit.ui.zone_details_screen import ZoneDetailsScreen
-from dns_toolkit.ui.confirm_screen import ConfirmScreen
-from dns_toolkit.ui.bind_preview_screen import BindPreviewScreen
+from dns_toolkit.services.bind_service import BindService
+from dns_toolkit.services.deployment_service import DeploymentService
+from dns_toolkit.services.diagnostics_service import DiagnosticsService
+from dns_toolkit.services.export_service import ExportService
+from dns_toolkit.services.target_service import TargetService
+from dns_toolkit.storage.settings_repository import SettingsRepository
+from dns_toolkit.ui.dashboard_screen import DashboardScreen
+from dns_toolkit.ui.deployment_screen import DeploymentScreen
+from dns_toolkit.ui.diagnostics_screen import DiagnosticsScreen
+from dns_toolkit.ui.records_screen import RecordsScreen
+from dns_toolkit.ui.settings_screen import SettingsScreen
+from dns_toolkit.ui.target_screen import TargetScreen
+from dns_toolkit.ui.zones_screen import ZonesScreen
+from dns_toolkit.ui.export_screen import ExportScreen
 
 
 class DNSToolkitApp(App[None]):
         TITLE = "DNS Toolkit"
-        SUB_TITLE = "Authoritative DNS Configuration"
-
-        CSS = """
-        Screen {
-                layout: vertical;
-        }
-
-        #workspace {
-                height: 1fr;
-        }
-
-        #sidebar {
-                width: 24;
-                border-right: solid $primary;
-                padding: 1;
-        }
-
-        #sidebar-title {
-                text-style: bold;
-                color: $accent;
-                margin-bottom: 1;
-        }
-
-        #content {
-                width: 1fr;
-                padding: 1 2;
-                overflow-y: auto;
-        }
-
-        .section-title {
-                text-style: bold;
-                color: $accent;
-                margin-bottom: 1;
-        }
-
-        #status {
-                height: auto;
-                border: round $primary;
-                padding: 1;
-                margin-bottom: 1;
-        }
-
-        #zone-actions {
-                height: 3;
-                align: left middle;
-                margin-bottom: 1;
-        }
-
-        #zone-actions Static {
-                width: 1fr;
-        }
-
-        #zone-actions Button {
-                width: auto;
-                min-width: 12;
-                margin-right: 1;
-        }
-
-        #zone-table {
-                height: 10;
-                margin-bottom: 1;
-        }
-
-        #help {
-                height: auto;
-                color: $text-muted;
-                margin-top: 1;
-        }
-        """
-
-        BINDINGS = [
-                ("q", "quit", "Quit"),
-                ("question_mark", "help", "Help"),
-        ]
-
-        SECTIONS = [
-                "Dashboard",
-                "Zones",
-                "Records",
-                "Diagnostics",
-                "Settings",
-        ]
+        SUB_TITLE = "BIND 9 Management Console"
+        CSS_PATH = "app.tcss"
 
         def __init__(self) -> None:
                 super().__init__()
+
+                self.settings_repository = SettingsRepository()
+                self.settings = self.settings_repository.load()
+
                 self.zone_repository = ZoneRepository()
-
-        def compose(self) -> ComposeResult:
-                yield Header()
-
-                with Horizontal(id="workspace"):
-                        with Vertical(id="sidebar"):
-                                yield Label("NAVIGATION", id="sidebar-title")
-                                yield ListView(
-                                        *[
-                                                ListItem(
-                                                        Label(section),
-                                                        id=f"nav-{section.lower()}",
-                                                )
-                                                for section in self.SECTIONS
-                                        ],
-                                        initial_index=0,
-                                        id="navigation",
-                                )
-
-                        with Vertical(id="content"):
-                                yield Static(
-                                        "DNS TOOLKIT",
-                                        classes="section-title",
-                                        id="page-title",
-                                )
-                                yield Static(
-                                        "Local BIND 9 | Configuration preview mode",
-                                        id="status",
-                                )
-
-                                with Horizontal(id="zone-actions"):
-                                        yield Static(
-                                                "Configured zones",
-                                                classes="section-title",
-                                        )
-                                        yield Button(
-                                                "+ Add Zone",
-                                                variant="primary",
-                                                id="add-zone",
-                                        )
-                                        yield Button(
-                                                "+ Add Record",
-                                                id="add-record",
-                                        )
-                                        yield Button(
-                                                "View Details",
-                                                id="view-details",
-                                        )
-                                        yield Button(
-                                                "Delete Zone",
-                                                variant="error",
-                                                id="delete-zone",
-                                        )
-                                        yield Button(
-                                                "Preview BIND",
-                                                id="preview-bind",
-                                        )
-
-                                yield DataTable(id="zone-table")
-                                yield Static(
-                                        "Select a zone row before adding a record.",
-                                        id="page-description",
-                                )
-                                yield Static(
-                                        "Preview-first | No system changes until explicitly applied",
-                                        id="help",
-                                )
-
-                yield Footer()
-
-        def on_mount(self) -> None:
-                self._refresh_zone_table()
-
-        def _refresh_zone_table(self) -> None:
-                table = self.query_one("#zone-table", DataTable)
-                table.clear(columns=True)
-                table.add_columns("Zone", "Type", "Records", "Status")
-
-                for zone in self.zone_repository.list_zones():
-                        table.add_row(
-                                zone.name,
-                                zone.zone_type.value,
-                                str(len(zone.records)),
-                                "Draft",
-                                key=zone.name,
-                        )
-
-                table.cursor_type = "row"
-
-        def on_button_pressed(self, event: Button.Pressed) -> None:
-                if event.button.id == "add-zone":
-                        self.push_screen(
-                                AddZoneScreen(),
-                                self._handle_new_zone,
-                        )
-                elif event.button.id == "add-record":
-                        self._open_add_record_screen()
-                elif event.button.id == "view-details":
-                        self._open_zone_details_screen()
-                elif event.button.id == "delete-zone":
-                        self._confirm_delete_zone()
-                elif event.button.id == "preview-bind":
-                        self._open_bind_preview_screen()
-
-        def _handle_new_zone(self, zone: Zone | None) -> None:
-                if zone is None:
-                        return
-
-                try:
-                        self.zone_repository.add_zone(zone)
-                except (ValueError, RuntimeError) as exc:
-                        self.notify(
-                                str(exc),
-                                title="Unable to Add Zone",
-                                severity="error",
-                        )
-                        return
-
-                self._refresh_zone_table()
-                self.notify(
-                        f"Zone '{zone.name}' added.",
-                        title="Zone Created",
+                self.bind_service = BindService(
+                        service_name=self.settings.bind_service_name,
                 )
+                self.target_service = TargetService()
 
-        def _open_add_record_screen(self) -> None:
-                table = self.query_one("#zone-table", DataTable)
-
-                if table.row_count == 0:
-                        self.notify(
-                                "Create a zone before adding records.",
-                                title="No Zones",
-                                severity="warning",
-                        )
-                        return
-
-                if table.cursor_row is None:
-                        self.notify(
-                                "Select a zone row first.",
-                                title="No Zone Selected",
-                                severity="warning",
-                        )
-                        return
-
-                row_key, _ = table.coordinate_to_cell_key(
-                        table.cursor_coordinate
-                )
-                zone = self.zone_repository.get_zone(str(row_key.value))
-
-                if zone is None:
-                        self.notify(
-                                "The selected zone could not be found.",
-                                title="Zone Not Found",
-                                severity="error",
-                        )
-                        return
-
-                self.push_screen(
-                        AddRecordScreen(zone),
-                        lambda record: self._handle_new_record(zone.name, record),
-                )
-
-        def _open_zone_details_screen(self) -> None:
-                table = self.query_one("#zone-table", DataTable)
-
-                if table.row_count == 0 or table.cursor_row is None:
-                        self.notify(
-                                "Select a zone row first.",
-                                title="No Zone Selected",
-                                severity="warning",
-                        )
-                        return
-
-                row_key, _ = table.coordinate_to_cell_key(
-                        table.cursor_coordinate
-                )
-                zone = self.zone_repository.get_zone(str(row_key.value))
-
-                if zone is None:
-                        self.notify(
-                                "The selected zone could not be found.",
-                                title="Zone Not Found",
-                                severity="error",
-                        )
-                        return
-
-                self.push_screen(
-                        ZoneDetailsScreen(zone),
-                        lambda record: self._handle_deleted_record(
-                                zone.name,
-                                record,
-                        ),
-                )
-
-        def _handle_new_record(
-                self,
-                zone_name: str,
-                record: DNSRecord | None,
-        ) -> None:
-                if record is None:
-                        return
-
-                try:
-                        self.zone_repository.add_record(zone_name, record)
-                except (ValueError, RuntimeError) as exc:
-                        self.notify(
-                                str(exc),
-                                title="Unable to Add Record",
-                                severity="error",
-                        )
-                        return
-
-                self._refresh_zone_table()
-                self.notify(
-                        f"Record added to '{zone_name}'.",
-                        title="Record Created",
-                )
-
-        def _handle_deleted_record(
-                self,
-                zone_name: str,
-                record: DNSRecord | None,
-        ) -> None:
-                if record is None:
-                        return
-
-                try:
-                        deleted = self.zone_repository.delete_record(
-                                zone_name,
-                                record,
-                        )
-                except (ValueError, RuntimeError) as exc:
-                        self.notify(
-                                str(exc),
-                                title="Unable to Delete Record",
-                                severity="error",
-                        )
-                        return
-
-                if not deleted:
-                        self.notify(
-                                "The selected record no longer exists.",
-                                title="Record Not Found",
-                                severity="warning",
-                        )
-                        return
-
-                self._refresh_zone_table()
-                self.notify(
-                        f"Record deleted from '{zone_name}'.",
-                        title="Record Deleted",
-                )
-
-        def on_list_view_selected(
-                self,
-                event: ListView.Selected,
-        ) -> None:
-                if event.item.id is None:
-                        return
-
-                section = event.item.id.removeprefix("nav-")
-                title = section.replace("_", " ").title()
-
-                self.query_one("#page-title", Static).update(title)
-
-                descriptions = {
-                        "dashboard": "Overview of DNS Toolkit.",
-                        "zones": "Create and inspect DNS zones.",
-                        "records": (
-                                "Select a zone and add A, AAAA, CNAME, MX, NS, "
-                                "or TXT records."
-                        ),
-                        "diagnostics": (
-                                "Inspect DNS responses and validate configurations."
-                        ),
-                        "settings": (
-                                "Configure file paths and DNS backend options."
-                        ),
+                available_targets = {
+                        target.target_id
+                        for target in self.target_service.list_targets()
                 }
 
-                self.query_one("#page-description", Static).update(
-                        descriptions.get(
-                                section,
-                                "Section under development.",
+                if self.settings.active_target_id in available_targets:
+                        self.target_service.select_target(
+                                self.settings.active_target_id
                         )
+
+                backend = LocalBindBackend(
+                        config_path=Path(
+                                self.settings.bind_config_path
+                        ).expanduser(),
+                        service_name=self.settings.bind_service_name,
                 )
 
-        def action_help(self) -> None:
-                self.notify(
-                        "Use the arrow keys to navigate. Press Enter to select. "
-                        "Press Q to quit.",
-                        title="DNS Toolkit Help",
+                self.deployment_service = DeploymentService(backend)
+                self.diagnostics_service = DiagnosticsService(
+                        bind_service=self.bind_service,
+                        backend=backend,
+                )
+                self.export_service = ExportService()
+
+        def compose(self) -> ComposeResult:
+                with Horizontal(id="app-layout"):
+                        with Vertical(id="sidebar"):
+                                yield Static("DNS TOOLKIT", id="brand")
+                                yield Button("Dashboard", id="nav-dashboard")
+                                yield Button("Zones", id="nav-zones")
+                                yield Button("Records", id="nav-records")
+                                yield Button(
+                                        "Deployment",
+                                        id="nav-deployment",
+                                )
+                                yield Button(
+                                        "Targets",
+                                        id="nav-targets",
+                                )
+                                yield Button(
+                                        "Diagnostics",
+                                        id="nav-diagnostics",
+                                )
+                                yield Button(
+                                        "Export",
+                                        id="nav-export"
+                                )
+                                yield Button(
+                                        "Settings",
+                                        id="nav-settings",
+                                )
+                                yield Static(
+                                        "BIND 9 · Local Linux",
+                                        id="sidebar-footer",
+                                )
+
+                        with Vertical(id="main-content"):
+                                yield Static(
+                                        "Dashboard",
+                                        id="page-heading",
+                                )
+                                yield Static(
+                                        "DNS Toolkit is ready.",
+                                        id="dashboard-message",
+                                )
+                                yield Static("", id="dashboard-target")
+                                yield Static("", id="dashboard-service")
+                                yield Static("", id="dashboard-zones")
+                                yield Static("", id="dashboard-tools")
+                                yield Button(
+                                        "Refresh Dashboard",
+                                        id="refresh-dashboard",
+                                )
+
+        def on_mount(self) -> None:
+                self.refresh_dashboard()
+
+        def on_button_pressed(self, event: Button.Pressed) -> None:
+                actions = {
+                        "nav-dashboard": self.show_dashboard,
+                        "nav-zones": self.show_zones,
+                        "nav-records": self.show_records,
+                        "nav-deployment": self.show_deployment,
+                        "nav-targets": self.show_targets,
+                        "nav-diagnostics": self.show_diagnostics,
+                        "nav-export": self.show_export,
+                        "nav-settings": self.show_settings,
+                        "refresh-dashboard": self.refresh_dashboard,
+                }
+
+                action = actions.get(event.button.id)
+
+                if action is not None:
+                        action()
+
+        def refresh_dashboard(self) -> None:
+                target = self.target_service.get_active_target()
+                service = self.bind_service.get_service_status()
+                executables = self.bind_service.get_executables()
+                zones = self.zone_repository.list_zones()
+
+                available_tools = sum(
+                        executable is not None
+                        for executable in executables.values()
                 )
 
-
-        def _confirm_delete_zone(self) -> None:
-                table = self.query_one("#zone-table", DataTable)
-
-                if table.row_count == 0 or table.cursor_row is None:
-                        self.notify(
-                                "Select a zone row first.",
-                                title="No Zone Selected",
-                                severity="warning",
-                        )
-                        return
-
-                row_key, _ = table.coordinate_to_cell_key(
-                        table.cursor_coordinate
+                self.query_one("#dashboard-target", Static).update(
+                        f"Deployment target: {target.name}"
                 )
-                zone_name = str(row_key.value)
-                zone = self.zone_repository.get_zone(zone_name)
-
-                if zone is None:
-                        self.notify(
-                                "The selected zone could not be found.",
-                                title="Zone Not Found",
-                                severity="error",
-                        )
-                        return
-
-                message = (
-                        f"Delete zone '{zone.name}' and all "
-                        f"{len(zone.records)} of its DNS records?\n\n"
-                        "This removes the zone from DNS Toolkit's saved "
-                        "drafts. It does not modify system BIND 9 files."
+                self.query_one("#dashboard-service", Static).update(
+                        "BIND service: "
+                        f"{service.get('state', 'unknown')} "
+                        f"({service.get('substate', 'unknown')})"
+                )
+                self.query_one("#dashboard-zones", Static).update(
+                        f"Saved zones: {len(zones)}"
+                )
+                self.query_one("#dashboard-tools", Static).update(
+                        f"Available BIND tools: {available_tools}/"
+                        f"{len(executables)}"
                 )
 
+                self.query_one("#dashboard-message", Static).update(
+                        service.get("message", "Dashboard refreshed.")
+                )
+
+        def show_dashboard(self) -> None:
+                while self.screen_stack and len(self.screen_stack) > 1:
+                        self.pop_screen()
+
+                self.query_one("#page-heading", Static).update("Dashboard")
+                self.refresh_dashboard()
+
+        def show_zones(self) -> None:
+                self.push_screen(ZonesScreen(self.zone_repository))
+
+        def show_records(self) -> None:
+                self.push_screen(RecordsScreen(self.zone_repository))
+
+        def show_deployment(self) -> None:
                 self.push_screen(
-                        ConfirmScreen(
-                                title="Delete Zone?",
-                                message=message,
-                                confirm_label="Delete Zone",
-                        ),
-                        lambda confirmed: self._handle_delete_zone(
-                                zone.name,
-                                confirmed,
-                        ),
+                        DeploymentScreen(
+                                deployment_service=self.deployment_service,
+                                zone_repository=self.zone_repository,
+                                settings_repository=self.settings_repository,
+                        )
                 )
 
-        def _handle_delete_zone(
-                self,
-                zone_name: str,
-                confirmed: bool,
-        ) -> None:
-                if not confirmed:
-                        return
-
-                try:
-                        deleted = self.zone_repository.delete_zone(zone_name)
-                except (ValueError, RuntimeError) as exc:
-                        self.notify(
-                                str(exc),
-                                title="Unable to Delete Zone",
-                                severity="error",
+        def show_targets(self) -> None:
+                self.push_screen(
+                        TargetScreen(
+                                target_service=self.target_service,
+                                settings_repository=self.settings_repository,
                         )
-                        return
-
-                if not deleted:
-                        self.notify(
-                                f"Zone '{zone_name}' no longer exists.",
-                                title="Zone Not Found",
-                                severity="warning",
-                        )
-                        return
-
-                self._refresh_zone_table()
-                self.notify(
-                        f"Zone '{zone_name}' and its records were deleted.",
-                        title="Zone Deleted",
                 )
 
-        def on_data_table_row_selected(
-                self,
-                event: DataTable.RowSelected,
-        ) -> None:
-                if event.data_table.id != "zone-table":
-                        return
-
-                self._open_zone_details_screen()
-
-        def _open_bind_preview_screen(self) -> None:
-                table = self.query_one("#zone-table", DataTable)
-
-                if table.row_count == 0 or table.cursor_row is None:
-                        self.notify(
-                                "Select a zone row first.",
-                                title="No Zone Selected",
-                                severity="warning",
-                        )
-                        return
-
-                row_key, _ = table.coordinate_to_cell_key(
-                        table.cursor_coordinate
+        def show_diagnostics(self) -> None:
+                self.push_screen(
+                        DiagnosticsScreen(self.diagnostics_service)
                 )
-                zone = self.zone_repository.get_zone(str(row_key.value))
 
-                if zone is None:
-                        self.notify(
-                                "The selected zone could not be found.",
-                                title="Zone Not Found",
-                                severity="error",
+        def show_export(self) -> None:
+                self.push_screen(
+                        ExportScreen(
+                                export_service=self.export_service,
+                                zone_repository=self.zone_repository,
+                                settings_repository=self.settings_repository,
                         )
-                        return
+                )
 
-                try:
-                        self.push_screen(BindPreviewScreen(zone))
-                except (ValueError, RuntimeError) as exc:
-                        self.notify(
-                                str(exc),
-                                title="Preview Failed",
-                                severity="error",
-                        )
+        def show_settings(self) -> None:
+                self.push_screen(
+                        SettingsScreen(self.settings_repository)
+                )
 
 
+def main() -> None:
+        DNSToolkitApp().run()
