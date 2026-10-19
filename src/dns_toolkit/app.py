@@ -16,6 +16,7 @@ from dns_toolkit.models import DNSRecord, Zone
 from dns_toolkit.repositories import ZoneRepository
 from dns_toolkit.ui.add_record_screen import AddRecordScreen
 from dns_toolkit.ui.add_zone_screen import AddZoneScreen
+from dns_toolkit.ui.zone_details_screen import ZoneDetailsScreen
 
 
 class DNSToolkitApp(App[None]):
@@ -74,7 +75,8 @@ class DNSToolkitApp(App[None]):
 
         #zone-actions Button {
                 width: auto;
-                min-width: 16;
+                min-width: 14;
+                margin-right: 1;
         }
 
         #zone-table {
@@ -149,6 +151,10 @@ class DNSToolkitApp(App[None]):
                                                 "+ Add Record",
                                                 id="add-record",
                                         )
+                                        yield Button(
+                                                "View Details",
+                                                id="view-details",
+                                        )
 
                                 yield DataTable(id="zone-table")
                                 yield Static(
@@ -189,6 +195,8 @@ class DNSToolkitApp(App[None]):
                         )
                 elif event.button.id == "add-record":
                         self._open_add_record_screen()
+                elif event.button.id == "view-details":
+                        self._open_zone_details_screen()
 
         def _handle_new_zone(self, zone: Zone | None) -> None:
                 if zone is None:
@@ -247,6 +255,38 @@ class DNSToolkitApp(App[None]):
                         lambda record: self._handle_new_record(zone.name, record),
                 )
 
+        def _open_zone_details_screen(self) -> None:
+                table = self.query_one("#zone-table", DataTable)
+
+                if table.row_count == 0 or table.cursor_row is None:
+                        self.notify(
+                                "Select a zone row first.",
+                                title="No Zone Selected",
+                                severity="warning",
+                        )
+                        return
+
+                row_key, _ = table.coordinate_to_cell_key(
+                        table.cursor_coordinate
+                )
+                zone = self.zone_repository.get_zone(str(row_key.value))
+
+                if zone is None:
+                        self.notify(
+                                "The selected zone could not be found.",
+                                title="Zone Not Found",
+                                severity="error",
+                        )
+                        return
+
+                self.push_screen(
+                        ZoneDetailsScreen(zone),
+                        lambda record: self._handle_deleted_record(
+                                zone.name,
+                                record,
+                        ),
+                )
+
         def _handle_new_record(
                 self,
                 zone_name: str,
@@ -269,6 +309,41 @@ class DNSToolkitApp(App[None]):
                 self.notify(
                         f"Record added to '{zone_name}'.",
                         title="Record Created",
+                )
+
+        def _handle_deleted_record(
+                self,
+                zone_name: str,
+                record: DNSRecord | None,
+        ) -> None:
+                if record is None:
+                        return
+
+                try:
+                        deleted = self.zone_repository.delete_record(
+                                zone_name,
+                                record,
+                        )
+                except (ValueError, RuntimeError) as exc:
+                        self.notify(
+                                str(exc),
+                                title="Unable to Delete Record",
+                                severity="error",
+                        )
+                        return
+
+                if not deleted:
+                        self.notify(
+                                "The selected record no longer exists.",
+                                title="Record Not Found",
+                                severity="warning",
+                        )
+                        return
+
+                self._refresh_zone_table()
+                self.notify(
+                        f"Record deleted from '{zone_name}'.",
+                        title="Record Deleted",
                 )
 
         def on_list_view_selected(
