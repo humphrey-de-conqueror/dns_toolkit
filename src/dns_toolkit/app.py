@@ -17,6 +17,7 @@ from dns_toolkit.repositories import ZoneRepository
 from dns_toolkit.ui.add_record_screen import AddRecordScreen
 from dns_toolkit.ui.add_zone_screen import AddZoneScreen
 from dns_toolkit.ui.zone_details_screen import ZoneDetailsScreen
+from dns_toolkit.ui.confirm_screen import ConfirmScreen
 
 
 class DNSToolkitApp(App[None]):
@@ -75,7 +76,7 @@ class DNSToolkitApp(App[None]):
 
         #zone-actions Button {
                 width: auto;
-                min-width: 14;
+                min-width: 12;
                 margin-right: 1;
         }
 
@@ -155,6 +156,11 @@ class DNSToolkitApp(App[None]):
                                                 "View Details",
                                                 id="view-details",
                                         )
+                                        yield Button(
+                                                "Delete Zone",
+                                                variant="error",
+                                                id="delete-zone",
+                                        )
 
                                 yield DataTable(id="zone-table")
                                 yield Static(
@@ -197,6 +203,8 @@ class DNSToolkitApp(App[None]):
                         self._open_add_record_screen()
                 elif event.button.id == "view-details":
                         self._open_zone_details_screen()
+                elif event.button.id == "delete-zone":
+                        self._confirm_delete_zone()
 
         def _handle_new_zone(self, zone: Zone | None) -> None:
                 if zone is None:
@@ -386,3 +394,81 @@ class DNSToolkitApp(App[None]):
                         "Press Q to quit.",
                         title="DNS Toolkit Help",
                 )
+
+
+        def _confirm_delete_zone(self) -> None:
+                table = self.query_one("#zone-table", DataTable)
+
+                if table.row_count == 0 or table.cursor_row is None:
+                        self.notify(
+                                "Select a zone row first.",
+                                title="No Zone Selected",
+                                severity="warning",
+                        )
+                        return
+
+                row_key, _ = table.coordinate_to_cell_key(
+                        table.cursor_coordinate
+                )
+                zone_name = str(row_key.value)
+                zone = self.zone_repository.get_zone(zone_name)
+
+                if zone is None:
+                        self.notify(
+                                "The selected zone could not be found.",
+                                title="Zone Not Found",
+                                severity="error",
+                        )
+                        return
+
+                message = (
+                        f"Delete zone '{zone.name}' and all "
+                        f"{len(zone.records)} of its DNS records?\n\n"
+                        "This removes the zone from DNS Toolkit's saved "
+                        "drafts. It does not modify system BIND 9 files."
+                )
+
+                self.push_screen(
+                        ConfirmScreen(
+                                title="Delete Zone?",
+                                message=message,
+                                confirm_label="Delete Zone",
+                        ),
+                        lambda confirmed: self._handle_delete_zone(
+                                zone.name,
+                                confirmed,
+                        ),
+                )
+
+        def _handle_delete_zone(
+                self,
+                zone_name: str,
+                confirmed: bool,
+        ) -> None:
+                if not confirmed:
+                        return
+
+                try:
+                        deleted = self.zone_repository.delete_zone(zone_name)
+                except (ValueError, RuntimeError) as exc:
+                        self.notify(
+                                str(exc),
+                                title="Unable to Delete Zone",
+                                severity="error",
+                        )
+                        return
+
+                if not deleted:
+                        self.notify(
+                                f"Zone '{zone_name}' no longer exists.",
+                                title="Zone Not Found",
+                                severity="warning",
+                        )
+                        return
+
+                self._refresh_zone_table()
+                self.notify(
+                        f"Zone '{zone_name}' and its records were deleted.",
+                        title="Zone Deleted",
+                )
+
