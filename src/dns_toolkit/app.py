@@ -18,6 +18,7 @@ from dns_toolkit.ui.add_record_screen import AddRecordScreen
 from dns_toolkit.ui.add_zone_screen import AddZoneScreen
 from dns_toolkit.ui.zone_details_screen import ZoneDetailsScreen
 from dns_toolkit.ui.confirm_screen import ConfirmScreen
+from dns_toolkit.ui.bind_preview_screen import BindPreviewScreen
 
 
 class DNSToolkitApp(App[None]):
@@ -161,6 +162,10 @@ class DNSToolkitApp(App[None]):
                                                 variant="error",
                                                 id="delete-zone",
                                         )
+                                        yield Button(
+                                                "Preview BIND",
+                                                id="preview-bind",
+                                        )
 
                                 yield DataTable(id="zone-table")
                                 yield Static(
@@ -205,6 +210,8 @@ class DNSToolkitApp(App[None]):
                         self._open_zone_details_screen()
                 elif event.button.id == "delete-zone":
                         self._confirm_delete_zone()
+                elif event.button.id == "preview-bind":
+                        self._open_bind_preview_screen()
 
         def _handle_new_zone(self, zone: Zone | None) -> None:
                 if zone is None:
@@ -480,4 +487,38 @@ class DNSToolkitApp(App[None]):
                         return
 
                 self._open_zone_details_screen()
+
+        def _open_bind_preview_screen(self) -> None:
+                table = self.query_one("#zone-table", DataTable)
+
+                if table.row_count == 0 or table.cursor_row is None:
+                        self.notify(
+                                "Select a zone row first.",
+                                title="No Zone Selected",
+                                severity="warning",
+                        )
+                        return
+
+                row_key, _ = table.coordinate_to_cell_key(
+                        table.cursor_coordinate
+                )
+                zone = self.zone_repository.get_zone(str(row_key.value))
+
+                if zone is None:
+                        self.notify(
+                                "The selected zone could not be found.",
+                                title="Zone Not Found",
+                                severity="error",
+                        )
+                        return
+
+                try:
+                        self.push_screen(BindPreviewScreen(zone))
+                except (ValueError, RuntimeError) as exc:
+                        self.notify(
+                                str(exc),
+                                title="Preview Failed",
+                                severity="error",
+                        )
+
 
