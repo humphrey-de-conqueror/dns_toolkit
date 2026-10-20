@@ -93,7 +93,10 @@ class ZonesScreen(NavigationScreen):
 
                 if zone is not None:
                         self.app.push_screen(
-                                ZoneDetailsScreen(zone),
+                                ZoneDetailsScreen(
+                                        zone_name=zone.name,
+                                        zone_repository=self.zone_repository,
+                                ),
                                 self._on_details_closed,
                         )
 

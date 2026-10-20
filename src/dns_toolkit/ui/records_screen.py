@@ -78,4 +78,9 @@ class RecordsScreen(NavigationScreen):
                 zone = self.zone_repository.get_zone(zone_name)
 
                 if zone is not None:
-                        self.app.push_screen(ZoneDetailsScreen(zone))
+                        self.app.push_screen(
+                                ZoneDetailsScreen(
+                                        zone_name=zone.name,
+                                        zone_repository=self.zone_repository,
+                                )
+                        )
