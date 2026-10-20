@@ -1,291 +1,294 @@
 
 import json
+import os
+import tempfile
 from pathlib import Path
 
 from dns_toolkit.models import DNSRecord, Zone, ZoneType
 
 
 class ZoneRepository:
-        def __init__(self, storage_path: Path | None = None) -> None:
-                self._storage_path = (
+        SCHEMA_VERSION = 1
+
+        def __init__(
+                self,
+                storage_path: Path | None = None,
+        ) -> None:
+                self.storage_path = (
                         storage_path
-                        if storage_path is not None
-                        else Path.home()
+                        or Path.home()
                         / ".config"
                         / "dns-toolkit"
                         / "zones.json"
                 )
-                self._zones: dict[str, Zone] = {}
-                self._load_zones()
 
         def list_zones(self) -> list[Zone]:
-                return list(self._zones.values())
+                payload = self._read_payload()
+                return [
+                        self._zone_from_dict(item)
+                        for item in payload["zones"]
+                ]
 
-        def get_zone(self, name: str) -> Zone | None:
-                return self._zones.get(self._normalize_name(name))
+        def get_zone(self, zone_name: str) -> Zone | None:
+                normalized_name = self._normalize_zone_name(zone_name)
+
+                for zone in self.list_zones():
+                        if self._normalize_zone_name(zone.name) == normalized_name:
+                                return zone
+
+                return None
 
         def add_zone(self, zone: Zone) -> None:
-                key = self._normalize_name(zone.name)
+                zones = self.list_zones()
+                normalized_name = self._normalize_zone_name(zone.name)
 
-                if key in self._zones:
-                        raise ValueError(f"Zone already exists: {zone.name}")
+                if any(
+                        self._normalize_zone_name(existing.name)
+                        == normalized_name
+                        for existing in zones
+                ):
+                        raise ValueError(
+                                f"Zone already exists: {zone.name}"
+                        )
 
-                updated_zones = self._zones.copy()
-                updated_zones[key] = zone
+                zones.append(zone)
+                self._write_zones(zones)
 
-                self._save_zones(updated_zones)
-                self._zones = updated_zones
+        def delete_zone(self, zone_name: str) -> None:
+                normalized_name = self._normalize_zone_name(zone_name)
+                zones = self.list_zones()
+                remaining = [
+                        zone
+                        for zone in zones
+                        if self._normalize_zone_name(zone.name)
+                        != normalized_name
+                ]
 
-        def delete_zone(self, name: str) -> bool:
-                key = self._normalize_name(name)
+                if len(remaining) == len(zones):
+                        raise ValueError(
+                                f"Zone does not exist: {zone_name}"
+                        )
 
-                if key not in self._zones:
-                        return False
+                self._write_zones(remaining)
 
-                updated_zones = self._zones.copy()
-                del updated_zones[key]
-
-                self._save_zones(updated_zones)
-                self._zones = updated_zones
-                return True
-
-        def add_record(self, zone_name: str, record: DNSRecord) -> None:
-                key = self._normalize_name(zone_name)
-                existing_zone = self._zones.get(key)
-
-                if existing_zone is None:
-                        raise ValueError(f"Zone does not exist: {zone_name}")
-
-                for existing_record in existing_zone.records:
-                        if (
-                                existing_record.name.lower() == record.name.lower()
-                                and existing_record.record_type == record.record_type
-                                and existing_record.value == record.value
-                        ):
-                                raise ValueError(
-                                        f"Record already exists in zone "
-                                        f"'{existing_zone.name}'."
-                                )
-
-                updated_zone = Zone(
-                        name=existing_zone.name,
-                        nameserver=existing_zone.nameserver,
-                        admin_email=existing_zone.admin_email,
-                        zone_type=existing_zone.zone_type,
-                        records=[*existing_zone.records, record],
-                )
-
-                updated_zones = self._zones.copy()
-                updated_zones[key] = updated_zone
-
-                self._save_zones(updated_zones)
-                self._zones = updated_zones
-	
-
-        def delete_record(
+        def add_record(
                 self,
                 zone_name: str,
                 record: DNSRecord,
-        ) -> bool:
-                key = self._normalize_name(zone_name)
-                existing_zone = self._zones.get(key)
-
-                if existing_zone is None:
-                        raise ValueError(f"Zone does not exist: {zone_name}")
-
-                record_index = next(
-                        (
-                                index
-                                for index, existing_record
-                                in enumerate(existing_zone.records)
-                                if existing_record is record
-                        ),
-                        None,
-                )
-
-                if record_index is None:
-                        record_index = next(
-                                (
-                                        index
-                                        for index, existing_record
-                                        in enumerate(existing_zone.records)
-                                        if existing_record == record
-                                ),
-                                None,
-                        )
-
-                if record_index is None:
-                        return False
-
-                updated_records = list(existing_zone.records)
-                del updated_records[record_index]
-
-                updated_zone = Zone(
-                        name=existing_zone.name,
-                        nameserver=existing_zone.nameserver,
-                        admin_email=existing_zone.admin_email,
-                        zone_type=existing_zone.zone_type,
-                        records=updated_records,
-                )
-
-                updated_zones = self._zones.copy()
-                updated_zones[key] = updated_zone
-
-                self._save_zones(updated_zones)
-                self._zones = updated_zones
-                return True
-
+        ) -> None:
+                zone = self._require_zone(zone_name)
+                zone.records.append(record)
+                self._replace_zone(zone)
 
         def update_record(
                 self,
                 zone_name: str,
-                old_record: DNSRecord,
-                new_record: DNSRecord,
+                record_index: int,
+                record: DNSRecord,
         ) -> None:
-                key = self._normalize_name(zone_name)
-                existing_zone = self._zones.get(key)
+                zone = self._require_zone(zone_name)
 
-                if existing_zone is None:
-                        raise ValueError(f"Zone does not exist: {zone_name}")
-
-                record_index = next(
-                        (
-                                index
-                                for index, record
-                                in enumerate(existing_zone.records)
-                                if record == old_record
-                        ),
-                        None,
-                )
-
-                if record_index is None:
-                        raise ValueError("The original record no longer exists.")
-
-                for index, record in enumerate(existing_zone.records):
-                        if index == record_index:
-                                continue
-
-                        if (
-                                record.name.lower() == new_record.name.lower()
-                                and record.record_type == new_record.record_type
-                                and record.value == new_record.value
-                        ):
-                                raise ValueError(
-                                        "An identical record already exists."
-                                )
-
-                updated_records = list(existing_zone.records)
-                updated_records[record_index] = new_record
-
-                updated_zone = Zone(
-                        name=existing_zone.name,
-                        nameserver=existing_zone.nameserver,
-                        admin_email=existing_zone.admin_email,
-                        zone_type=existing_zone.zone_type,
-                        records=updated_records,
-                )
-
-                updated_zones = self._zones.copy()
-                updated_zones[key] = updated_zone
-
-                self._save_zones(updated_zones)
-                self._zones = updated_zones
-
-
-        def _load_zones(self) -> None:
-                if not self._storage_path.exists():
-                        return
-
-                try:
-                        data = json.loads(
-                                self._storage_path.read_text(encoding="utf-8")
+                if not 0 <= record_index < len(zone.records):
+                        raise IndexError(
+                                f"Record index out of range: {record_index}"
                         )
 
-                        if data.get("schema_version") != 1:
-                                raise ValueError(
-                                        "Unsupported zones file schema version."
+                zone.records[record_index] = record
+                self._replace_zone(zone)
+
+        def delete_record(
+                self,
+                zone_name: str,
+                record_index: int,
+        ) -> None:
+                zone = self._require_zone(zone_name)
+
+                if not 0 <= record_index < len(zone.records):
+                        raise IndexError(
+                                f"Record index out of range: {record_index}"
+                        )
+
+                del zone.records[record_index]
+                self._replace_zone(zone)
+
+        def _require_zone(self, zone_name: str) -> Zone:
+                zone = self.get_zone(zone_name)
+
+                if zone is None:
+                        raise ValueError(
+                                f"Zone does not exist: {zone_name}"
+                        )
+
+                return zone
+
+        def _replace_zone(self, updated_zone: Zone) -> None:
+                zones = self.list_zones()
+                normalized_name = self._normalize_zone_name(
+                        updated_zone.name
+                )
+
+                for index, zone in enumerate(zones):
+                        if (
+                                self._normalize_zone_name(zone.name)
+                                == normalized_name
+                        ):
+                                zones[index] = updated_zone
+                                self._write_zones(zones)
+                                return
+
+                raise ValueError(
+                        f"Zone does not exist: {updated_zone.name}"
+                )
+
+        def _read_payload(self) -> dict[str, object]:
+                if not self.storage_path.exists():
+                        return {
+                                "version": self.SCHEMA_VERSION,
+                                "zones": [],
+                        }
+
+                try:
+                        payload = json.loads(
+                                self.storage_path.read_text(
+                                        encoding="utf-8"
                                 )
+                        )
+                except json.JSONDecodeError as error:
+                        raise ValueError(
+                                f"Invalid zone storage JSON: {error}"
+                        ) from error
 
-                        loaded_zones: dict[str, Zone] = {}
+                if not isinstance(payload, dict):
+                        raise ValueError(
+                                "Zone storage must contain a JSON object."
+                        )
 
-                        for item in data["zones"]:
-                                records = [
-                                        DNSRecord(
-                                                name=record["name"],
-                                                record_type=record["record_type"],
-                                                value=record["value"],
-                                                ttl=record.get("ttl", 3600),
-                                        )
-                                        for record in item.get("records", [])
-                                ]
+                if payload.get("version") != self.SCHEMA_VERSION:
+                        raise ValueError(
+                                "Unsupported zone storage version."
+                        )
 
-                                zone = Zone(
-                                        name=item["name"],
-                                        nameserver=item["nameserver"],
-                                        admin_email=item["admin_email"],
-                                        zone_type=ZoneType(item["zone_type"]),
-                                        records=records,
-                                )
+                zones = payload.get("zones")
 
-                                key = self._normalize_name(zone.name)
+                if not isinstance(zones, list):
+                        raise ValueError(
+                                "Zone storage must contain a zones list."
+                        )
 
-                                if key in loaded_zones:
-                                        raise ValueError(
-                                                f"Duplicate zone in file: {zone.name}"
-                                        )
+                if not all(isinstance(item, dict) for item in zones):
+                        raise ValueError(
+                                "Each stored zone must be a JSON object."
+                        )
 
-                                loaded_zones[key] = zone
+                return payload
 
-                        self._zones = loaded_zones
+        def _write_zones(self, zones: list[Zone]) -> None:
+                self.storage_path.parent.mkdir(
+                        parents=True,
+                        exist_ok=True,
+                )
 
-                except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
-                        raise RuntimeError(
-                                f"Unable to load zones from "
-                                f"{self._storage_path}: {exc}"
-                        ) from exc
-
-        def _save_zones(self, zones: dict[str, Zone]) -> None:
-                data = {
-                        "schema_version": 1,
+                payload = {
+                        "version": self.SCHEMA_VERSION,
                         "zones": [
-                                {
-                                        "name": zone.name,
-                                        "nameserver": zone.nameserver,
-                                        "admin_email": zone.admin_email,
-                                        "zone_type": zone.zone_type.value,
-                                        "records": [
-                                                {
-                                                        "name": record.name,
-                                                        "record_type": record.record_type,
-                                                        "value": record.value,
-                                                        "ttl": record.ttl,
-                                                }
-                                                for record in zone.records
-                                        ],
-                                }
-                                for zone in zones.values()
+                                self._zone_to_dict(zone)
+                                for zone in zones
                         ],
                 }
 
+                descriptor, temporary_name = tempfile.mkstemp(
+                        prefix="zones-",
+                        suffix=".tmp",
+                        dir=self.storage_path.parent,
+                )
+                temporary_path = Path(temporary_name)
+
                 try:
-                        self._storage_path.parent.mkdir(
-                                parents=True,
-                                exist_ok=True,
-                        )
-
-                        temporary_path = self._storage_path.with_suffix(".tmp")
-                        temporary_path.write_text(
-                                json.dumps(data, indent=4) + "\n",
+                        with os.fdopen(
+                                descriptor,
+                                "w",
                                 encoding="utf-8",
-                        )
-                        temporary_path.replace(self._storage_path)
+                        ) as temporary_file:
+                                json.dump(
+                                        payload,
+                                        temporary_file,
+                                        indent=4,
+                                )
+                                temporary_file.write("\n")
+                                temporary_file.flush()
+                                os.fsync(temporary_file.fileno())
 
-                except OSError as exc:
-                        raise RuntimeError(
-                                f"Unable to save zones to "
-                                f"{self._storage_path}: {exc}"
-                        ) from exc
+                        temporary_path.replace(self.storage_path)
+
+                except Exception:
+                        temporary_path.unlink(missing_ok=True)
+                        raise
 
         @staticmethod
-        def _normalize_name(name: str) -> str:
+        def _zone_to_dict(zone: Zone) -> dict[str, object]:
+                return {
+                        "name": zone.name,
+                        "nameserver": zone.nameserver,
+                        "admin_email": zone.admin_email,
+                        "zone_type": zone.zone_type.value,
+                        "records": [
+                                {
+                                        "name": record.name,
+                                        "record_type": record.record_type,
+                                        "value": record.value,
+                                        "ttl": record.ttl,
+                                }
+                                for record in zone.records
+                        ],
+                }
+
+        @staticmethod
+        def _zone_from_dict(data: dict[str, object]) -> Zone:
+                raw_records = data.get("records", [])
+
+                if not isinstance(raw_records, list):
+                        raise ValueError(
+                                "Stored zone records must be a list."
+                        )
+
+                records: list[DNSRecord] = []
+
+                for item in raw_records:
+                        if not isinstance(item, dict):
+                                raise ValueError(
+                                        "Each stored record must be an object."
+                                )
+
+                        records.append(
+                                DNSRecord(
+                                        name=str(item["name"]),
+                                        record_type=str(
+                                                item["record_type"]
+                                        ),
+                                        value=str(item["value"]),
+                                        ttl=int(item.get("ttl", 3600)),
+                                )
+                        )
+
+                raw_zone_type = str(
+                        data.get("zone_type", ZoneType.PRIMARY.value)
+                )
+
+                try:
+                        zone_type = ZoneType(raw_zone_type)
+                except ValueError as error:
+                        raise ValueError(
+                                f"Unsupported zone type: {raw_zone_type}"
+                        ) from error
+
+                return Zone(
+                        name=str(data["name"]),
+                        nameserver=str(data["nameserver"]),
+                        admin_email=str(data["admin_email"]),
+                        zone_type=zone_type,
+                        records=records,
+                )
+
+        @staticmethod
+        def _normalize_zone_name(name: str) -> str:
                 return name.rstrip(".").lower()

@@ -47,17 +47,17 @@ class ZonesScreen(NavigationScreen):
                                 key=zone.name,
                         )
 
-        def _selected_zone(self) -> Zone | None:
+        def _selected_zone(self):
                 table = self.query_one("#zones-table", DataTable)
 
-                if table.row_count == 0 or table.cursor_row is None:
+                if table.row_count == 0:
                         return None
 
-                row_key, _ = table.coordinate_to_cell_key(
+                cell_key = table.coordinate_to_cell_key(
                         table.cursor_coordinate
-                ), None
+                )
+                zone_name = str(cell_key.row_key.value)
 
-                zone_name = str(row_key.row_key.value)
                 return self.zone_repository.get_zone(zone_name)
 
         def on_button_pressed(self, event: Button.Pressed) -> None:

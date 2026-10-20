@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+from datetime import datetime
 from pathlib import Path
 
 
@@ -15,11 +16,32 @@ BACKUP_ROOT = Path("/var/lib/dns-toolkit/backups")
 SERVICE_NAME = "bind9"
 
 
-def validate_destination(destination: Path) -> None:
-        if destination == CONFIG_PATH:
-                return
+def run_command(
+        command: list[str],
+        timeout: float = 30.0,
+) -> tuple[bool, str]:
+        try:
+                result = subprocess.run(
+                        command,
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                        timeout=timeout,
+                )
+        except (OSError, subprocess.TimeoutExpired) as error:
+                return False, str(error)
 
-        if destination == INCLUDE_PATH:
+        output = "\n".join(
+                part
+                for part in (result.stdout, result.stderr)
+                if part
+        )
+
+        return result.returncode == 0, output
+
+
+def validate_destination(destination: Path) -> None:
+        if destination in {CONFIG_PATH, INCLUDE_PATH}:
                 return
 
         if (
@@ -34,28 +56,13 @@ def validate_destination(destination: Path) -> None:
         )
 
 
-def run_command(command: list[str]) -> tuple[bool, str]:
-        try:
-                result = subprocess.run(
-                        command,
-                        capture_output=True,
-                        text=True,
-                        check=False,
-                        timeout=30,
-                )
-        except (OSError, subprocess.TimeoutExpired) as error:
-                return False, str(error)
-
-        output = "\n".join(
-                part
-                for part in (result.stdout, result.stderr)
-                if part
-        )
-
-        return result.returncode == 0, output
-
-
 def load_manifest(path: Path) -> dict[Path, str]:
+        if not path.is_absolute():
+                raise ValueError("Manifest path must be absolute.")
+
+        if path.is_symlink() or not path.is_file():
+                raise ValueError("Manifest must be a regular file.")
+
         payload = json.loads(path.read_text(encoding="utf-8"))
 
         if payload.get("version") != 1:
@@ -65,7 +72,7 @@ def load_manifest(path: Path) -> dict[Path, str]:
                 raise ValueError("Unexpected BIND configuration path.")
 
         if payload.get("service_name") != SERVICE_NAME:
-                raise ValueError("Unexpected service name.")
+                raise ValueError("Unexpected BIND service name.")
 
         entries = payload.get("files")
 
@@ -93,14 +100,10 @@ def load_manifest(path: Path) -> dict[Path, str]:
 
                 files[destination] = content
 
-        if CONFIG_PATH not in files:
+        if CONFIG_PATH not in files or INCLUDE_PATH not in files:
                 raise ValueError(
-                        "Manifest must contain the candidate named.conf."
-                )
-
-        if INCLUDE_PATH not in files:
-                raise ValueError(
-                        "Manifest must contain the managed zone include."
+                        "Manifest must contain named.conf and the "
+                        "managed zone include."
                 )
 
         return files
@@ -109,8 +112,9 @@ def load_manifest(path: Path) -> dict[Path, str]:
 def create_backup(
         files: dict[Path, str],
         backup_directory: Path,
-) -> set[Path]:
+) -> tuple[set[Path], dict[Path, int]]:
         existing: set[Path] = set()
+        modes: dict[Path, int] = {}
 
         for destination in files:
                 if destination.is_symlink():
@@ -118,29 +122,38 @@ def create_backup(
                                 f"Refusing symlink destination: {destination}"
                         )
 
-                if destination.exists():
-                        if not destination.is_file():
-                                raise ValueError(
-                                        f"Not a regular file: {destination}"
-                                )
+                if not destination.exists():
+                        continue
 
-                        backup_path = (
-                                backup_directory
-                                / destination.relative_to("/").as_posix()
+                if not destination.is_file():
+                        raise ValueError(
+                                f"Destination is not a regular file: "
+                                f"{destination}"
                         )
-                        backup_path.parent.mkdir(
-                                parents=True,
-                                exist_ok=True,
-                        )
-                        shutil.copy2(destination, backup_path)
-                        existing.add(destination)
 
-        return existing
+                backup_path = (
+                        backup_directory
+                        / destination.relative_to("/").as_posix()
+                )
+                backup_path.parent.mkdir(
+                        parents=True,
+                        exist_ok=True,
+                )
+                shutil.copy2(destination, backup_path)
+
+                existing.add(destination)
+                modes[destination] = (
+                        destination.stat().st_mode & 0o777
+                )
+
+        return existing, modes
 
 
-def write_files(files: dict[Path, str]) -> list[Path]:
-        written: list[Path] = []
-
+def install_files(
+        files: dict[Path, str],
+        written: list[Path],
+        modes: dict[Path, int],
+) -> None:
         for destination, content in files.items():
                 destination.parent.mkdir(
                         parents=True,
@@ -152,11 +165,7 @@ def write_files(files: dict[Path, str]) -> list[Path]:
                                 f"Refusing symlink destination: {destination}"
                         )
 
-                old_mode = (
-                        destination.stat().st_mode & 0o777
-                        if destination.exists()
-                        else 0o644
-                )
+                mode = modes.get(destination, 0o644)
 
                 with tempfile.NamedTemporaryFile(
                         mode="w",
@@ -171,30 +180,88 @@ def write_files(files: dict[Path, str]) -> list[Path]:
                         temporary_file.flush()
                         os.fsync(temporary_file.fileno())
 
-                os.chmod(temporary_path, old_mode)
+                os.chmod(temporary_path, mode)
                 temporary_path.replace(destination)
                 written.append(destination)
-
-        return written
 
 
 def restore_files(
         destinations: list[Path],
         existing: set[Path],
         backup_directory: Path,
-) -> None:
+        modes: dict[Path, int],
+) -> list[str]:
+        errors: list[str] = []
+
         for destination in reversed(destinations):
-                if destination in existing:
-                        backup_path = (
-                                backup_directory
-                                / destination.relative_to("/").as_posix()
+                try:
+                        if destination in existing:
+                                backup_path = (
+                                        backup_directory
+                                        / destination.relative_to("/").as_posix()
+                                )
+
+                                if not backup_path.is_file():
+                                        raise FileNotFoundError(
+                                                f"Missing backup: {backup_path}"
+                                        )
+
+                                shutil.copy2(
+                                        backup_path,
+                                        destination,
+                                )
+                                os.chmod(
+                                        destination,
+                                        modes.get(destination, 0o644),
+                                )
+                        else:
+                                destination.unlink(missing_ok=True)
+
+                except OSError as error:
+                        errors.append(
+                                f"Could not restore {destination}: {error}"
                         )
-                        shutil.copy2(backup_path, destination)
-                else:
-                        destination.unlink(missing_ok=True)
+
+        return errors
 
 
-def install(manifest_path: Path) -> int:
+def verify_deployment(zone_names: list[str]) -> list[str]:
+        errors: list[str] = []
+
+        active, output = run_command(
+                ["systemctl", "is-active", SERVICE_NAME]
+        )
+
+        if not active or output.strip() != "active":
+                errors.append(
+                        "BIND is not active after reload: " + output
+                )
+                return errors
+
+        for zone_name in zone_names:
+                success, output = run_command(
+                        [
+                                "dig",
+                                "+time=2",
+                                "+tries=1",
+                                "+short",
+                                "@127.0.0.1",
+                                zone_name,
+                                "SOA",
+                        ],
+                        timeout=5.0,
+                )
+
+                if not success or not output.strip():
+                        errors.append(
+                                f"Zone {zone_name} failed SOA verification: "
+                                f"{output}"
+                        )
+
+        return errors
+
+
+def deploy(manifest_path: Path) -> int:
         if os.geteuid() != 0:
                 raise PermissionError(
                         "The deployment helper must run as root."
@@ -202,68 +269,114 @@ def install(manifest_path: Path) -> int:
 
         files = load_manifest(manifest_path)
 
-        BACKUP_ROOT.mkdir(parents=True, exist_ok=True)
+        BACKUP_ROOT.mkdir(
+                parents=True,
+                exist_ok=True,
+                mode=0o700,
+        )
+        os.chmod(BACKUP_ROOT, 0o700)
 
-        with tempfile.TemporaryDirectory(
-                prefix="dns-toolkit-backup-",
-                dir=BACKUP_ROOT,
-        ) as temporary_backup:
-                backup_directory = Path(temporary_backup)
-                existing = create_backup(files, backup_directory)
-                written: list[Path] = []
+        backup_directory = (
+                BACKUP_ROOT
+                / datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+        )
+        backup_directory.mkdir(
+                parents=True,
+                exist_ok=False,
+                mode=0o700,
+        )
 
-                try:
-                        written = write_files(files)
+        existing, modes = create_backup(
+                files,
+                backup_directory,
+        )
 
-                        valid, output = run_command(
-                                ["named-checkconf", str(CONFIG_PATH)]
+        written: list[Path] = []
+
+        zone_names = [
+                destination.name[3:]
+                for destination in files
+                if destination.parent == ZONE_DIRECTORY
+                and destination.name.startswith("db.")
+        ]
+
+        try:
+                install_files(files, written, modes)
+
+                valid, output = run_command(
+                        ["named-checkconf", "-z", str(CONFIG_PATH)]
+                )
+
+                if not valid:
+                        raise RuntimeError(
+                                "Candidate BIND validation failed:\n"
+                                + output
                         )
 
-                        if not valid:
-                                raise RuntimeError(
-                                        "BIND configuration validation failed:\n"
-                                        + output
-                                )
+                reloaded, output = run_command(
+                        ["systemctl", "reload", SERVICE_NAME]
+                )
 
-                        reloaded, output = run_command(
-                                ["systemctl", "reload", SERVICE_NAME]
+                if not reloaded:
+                        raise RuntimeError(
+                                "BIND reload failed:\n" + output
                         )
 
-                        if not reloaded:
-                                raise RuntimeError(
-                                        "BIND reload failed:\n" + output
-                                )
+                verification_errors = verify_deployment(zone_names)
 
-                except Exception:
-                        restore_files(
-                                written,
-                                existing,
-                                backup_directory,
+                if verification_errors:
+                        raise RuntimeError(
+                                "Post-deployment verification failed:\n"
+                                + "\n".join(verification_errors)
                         )
-                        run_command(
-                                ["systemctl", "reload", SERVICE_NAME]
-                        )
-                        raise
 
-        print("Deployment completed and BIND reload succeeded.")
+        except Exception as error:
+                rollback_errors = restore_files(
+                        written,
+                        existing,
+                        backup_directory,
+                        modes,
+                )
+
+                restored, restore_output = run_command(
+                        ["named-checkconf", "-z", str(CONFIG_PATH)]
+                )
+
+                reloaded, reload_output = run_command(
+                        ["systemctl", "reload", SERVICE_NAME]
+                )
+
+                details = [
+                        f"Deployment failed: {error}",
+                        f"Restored configuration validates: {restored}",
+                        f"Restored configuration check: {restore_output}",
+                        f"Restored service reload succeeded: {reloaded}",
+                        f"Restored service reload output: {reload_output}",
+                ]
+                details.extend(rollback_errors)
+
+                raise RuntimeError("\n".join(details)) from error
+
+        print(f"Deployment succeeded. Backup retained at {backup_directory}")
         return 0
 
 
 def main() -> int:
         parser = argparse.ArgumentParser(
-                description="Restricted DNS Toolkit BIND deployment helper."
+                description="Restricted BIND deployment helper."
         )
         parser.add_argument(
                 "operation",
                 choices=["install"],
         )
-        parser.add_argument("--manifest", required=True, type=Path)
+        parser.add_argument(
+                "--manifest",
+                required=True,
+                type=Path,
+        )
         arguments = parser.parse_args()
 
-        if arguments.operation != "install":
-                raise ValueError("Unsupported operation.")
-
-        return install(arguments.manifest)
+        return deploy(arguments.manifest)
 
 
 if __name__ == "__main__":

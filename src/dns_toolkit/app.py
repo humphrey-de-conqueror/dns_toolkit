@@ -154,6 +154,7 @@ class DNSToolkitApp(App[None]):
                                 settings_repository=(
                                         self.services.settings_repository
                                 ),
+                                on_saved=self.on_settings_saved,
                         )
                 )
 

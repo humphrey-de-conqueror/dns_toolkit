@@ -3,9 +3,10 @@ from textual.app import ComposeResult
 from textual.containers import Vertical
 from dns_toolkit.ui.navigation_screen import NavigationScreen
 from textual.widgets import Button, Select, Static
-
+from collections.abc import Callable
 from dns_toolkit.services.target_service import TargetService
 from dns_toolkit.storage.settings_repository import SettingsRepository
+
 
 
 class TargetScreen(NavigationScreen):
@@ -13,10 +14,12 @@ class TargetScreen(NavigationScreen):
                 self,
                 target_service: TargetService,
                 settings_repository: SettingsRepository,
+                on_saved: Callable[[], None] | None = None,
         ) -> None:
                 super().__init__()
                 self.target_service = target_service
                 self.settings_repository = settings_repository
+                self.on_saved = on_saved
 
         def compose_page(self) -> ComposeResult:
                 active_target = self.target_service.get_active_target()
@@ -67,6 +70,9 @@ class TargetScreen(NavigationScreen):
                         self.settings_repository.update(
                                 active_target_id=target.target_id
                         )
+
+                        if self.on_saved is not None:
+                                self.on_saved()
 
                         self.query_one("#current-target", Static).update(
                                 f"Current target: {target.name}"

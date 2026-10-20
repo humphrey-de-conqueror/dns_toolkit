@@ -34,6 +34,13 @@ class DeploymentScreen(NavigationScreen):
                         yield Static(
                                 "Prepare and validate a candidate BIND "
                                 "configuration before deployment."
+                                ""
+                                "The current deployment planner supports "
+                                "the standard local BIND paths only: "
+                                "/etc/bind/named.conf and "
+                                "/etc/bind/zones. Custom paths are not "
+                                "supported by the current deployment "
+                                "manifest."
                         )
                         yield Static(
                                 "No live system files are changed during "
