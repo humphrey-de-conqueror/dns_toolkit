@@ -1,13 +1,13 @@
 
 from textual.app import ComposeResult
 from textual.containers import Vertical
-from textual.screen import Screen
+from dns_toolkit.ui.navigation_screen import NavigationScreen
 from textual.widgets import Button, Static
 
 from dns_toolkit.services.diagnostics_service import DiagnosticsService
 
 
-class DiagnosticsScreen(Screen):
+class DiagnosticsScreen(NavigationScreen):
         def __init__(
                 self,
                 diagnostics_service: DiagnosticsService,
@@ -15,7 +15,7 @@ class DiagnosticsScreen(Screen):
                 super().__init__()
                 self.diagnostics_service = diagnostics_service
 
-        def compose(self) -> ComposeResult:
+        def compose_page(self) -> ComposeResult:
                 with Vertical(id="diagnostics"):
                         yield Static("System Diagnostics", classes="page-title")
                         yield Static("", id="diagnostics-results")

@@ -2,9 +2,16 @@
 from pathlib import Path
 
 from dns_toolkit.deployment.base import DeploymentResult
+from dns_toolkit.deployment.helper_status import (
+        DEFAULT_HELPER_PATH,
+        HelperStatus,
+)
 from dns_toolkit.deployment.local_bind import LocalBindBackend
+from dns_toolkit.deployment.manifest import DeploymentManifest
+from dns_toolkit.deployment.manifest_stager import ManifestStager
 from dns_toolkit.deployment.plan import DeploymentPlan
 from dns_toolkit.deployment.plan_builder import DeploymentPlanBuilder
+from dns_toolkit.deployment.privilege import PrivilegeManager
 from dns_toolkit.models import Zone
 
 
@@ -13,14 +20,32 @@ class DeploymentService:
                 self,
                 backend: LocalBindBackend,
                 plan_builder: DeploymentPlanBuilder | None = None,
+                manifest_stager: ManifestStager | None = None,
+                helper_status: HelperStatus | None = None,
+                live_deployment_enabled: bool = False,
         ) -> None:
                 self.backend = backend
                 self.plan_builder = (
                         plan_builder or DeploymentPlanBuilder()
                 )
+                self.manifest_stager = (
+                        manifest_stager or ManifestStager()
+                )
+                self.helper_status = (
+                        helper_status or HelperStatus()
+                )
+                self.live_deployment_enabled = (
+                        live_deployment_enabled
+                )
+                self.privilege_manager = PrivilegeManager(
+                        DEFAULT_HELPER_PATH
+                )
 
         def inspect_target(self) -> dict[str, object]:
                 return self.backend.inspect()
+
+        def inspect_helper(self) -> dict[str, object]:
+                return self.helper_status.inspect()
 
         def validate(
                 self,
@@ -47,6 +72,33 @@ class DeploymentService:
         ) -> tuple[bool, str]:
                 return self.backend.validate_plan(plan)
 
+        def preflight(self) -> tuple[bool, str]:
+                helper = self.inspect_helper()
+                messages = [
+                        f"Helper path: {helper['helper_path']}",
+                        f"Helper exists: {helper['helper_exists']}",
+                        f"Root-owned: {helper['helper_root_owned']}",
+                        "Protected from group/other writes: "
+                        f"{helper['helper_not_writable_by_others']}",
+                        f"pkexec available: {helper['pkexec_available']}",
+                ]
+
+                ready = bool(helper["ready_for_review"])
+
+                if not ready:
+                        messages.append(
+                                "Privileged helper preflight failed."
+                        )
+
+                if not self.live_deployment_enabled:
+                        messages.append(
+                                "Live deployment is disabled by application "
+                                "configuration."
+                        )
+                        ready = False
+
+                return ready, "\n".join(messages)
+
         def deploy(
                 self,
                 plan: DeploymentPlan,
@@ -72,20 +124,57 @@ class DeploymentService:
                                 changed_files=[],
                         )
 
-                valid, message = self.validate_plan(plan)
+                valid, validation_message = (
+                        self.validate_plan(plan)
+                )
 
                 if not valid:
                         return DeploymentResult(
                                 success=False,
                                 message=(
                                         "Candidate validation failed:\n"
-                                        + message
+                                        + validation_message
                                 ),
                                 changed_files=[],
                         )
 
-                return self.backend.deploy(
-                        config_path=plan.config_path,
-                        zone_files=plan.files,
-                        confirmed=confirmed,
+                ready, preflight_message = self.preflight()
+
+                if not ready:
+                        return DeploymentResult(
+                                success=False,
+                                message=(
+                                        "Deployment was not started.\n"
+                                        + preflight_message
+                                ),
+                                changed_files=[],
+                        )
+
+                manifest = DeploymentManifest.from_plan(plan)
+                manifest_path = self.manifest_stager.stage(manifest)
+
+                try:
+                        success, output = self.privilege_manager.run(
+                                "install",
+                                [
+                                        "--manifest",
+                                        str(manifest_path),
+                                ],
+                        )
+                finally:
+                        self.manifest_stager.cleanup(manifest_path)
+
+                return DeploymentResult(
+                        success=success,
+                        message=(
+                                "Deployment completed."
+                                if success
+                                else "Deployment failed."
+                        ),
+                        changed_files=(
+                                list(plan.files)
+                                if success
+                                else []
+                        ),
+                        command_output=output,
                 )

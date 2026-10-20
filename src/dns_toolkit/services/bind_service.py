@@ -1,20 +1,29 @@
 
 import shutil
-import subprocess
+
+from dns_toolkit.deployment.command_runner import CommandRunner
 
 
 class BindService:
-        def __init__(self, service_name: str = "bind9") -> None:
+        def __init__(
+                self,
+                service_name: str = "bind9",
+                command_runner: CommandRunner | None = None,
+        ) -> None:
                 self.service_name = service_name
+                self.command_runner = (
+                        command_runner or CommandRunner()
+                )
 
         def get_executables(self) -> dict[str, str | None]:
-                names = (
+                names = [
                         "named",
                         "named-checkconf",
                         "named-checkzone",
                         "rndc",
                         "dig",
-                )
+                        "systemctl",
+                ]
 
                 return {
                         name: shutil.which(name)
@@ -22,36 +31,37 @@ class BindService:
                 }
 
         def get_service_status(self) -> dict[str, str]:
-                if shutil.which("systemctl") is None:
+                systemctl = shutil.which("systemctl")
+
+                if systemctl is None:
                         return {
-                                "state": "unknown",
-                                "message": "systemctl is unavailable.",
+                                "state": "unavailable",
+                                "substate": "unknown",
+                                "message": "systemctl is not installed.",
                         }
 
-                result = subprocess.run(
+                result = self.command_runner.run(
                         [
-                                "systemctl",
+                                systemctl,
                                 "show",
                                 self.service_name,
                                 "--property=ActiveState",
                                 "--property=SubState",
                                 "--no-pager",
-                        ],
-                        capture_output=True,
-                        text=True,
-                        check=False,
+                        ]
                 )
 
-                if result.returncode != 0:
+                if not result.success:
                         return {
                                 "state": "unknown",
+                                "substate": "unknown",
                                 "message": (
-                                        result.stderr.strip()
-                                        or "Unable to inspect BIND service."
+                                        result.output
+                                        or "Could not query BIND service status."
                                 ),
                         }
 
-                properties = {}
+                properties: dict[str, str] = {}
 
                 for line in result.stdout.splitlines():
                         key, separator, value = line.partition("=")
@@ -59,35 +69,38 @@ class BindService:
                         if separator:
                                 properties[key] = value
 
+                state = properties.get("ActiveState", "unknown")
+                substate = properties.get("SubState", "unknown")
+
                 return {
-                        "state": properties.get("ActiveState", "unknown"),
-                        "substate": properties.get("SubState", "unknown"),
-                        "message": "Service status retrieved.",
+                        "state": state,
+                        "substate": substate,
+                        "message": (
+                                f"{self.service_name}: {state} ({substate})"
+                        ),
                 }
 
-        def perform_service_action(self, action: str) -> tuple[bool, str]:
-                allowed_actions = {"start", "stop", "restart", "reload"}
+        def perform_service_action(
+                self,
+                action: str,
+        ) -> tuple[bool, str]:
+                allowed_actions = {
+                        "start",
+                        "stop",
+                        "restart",
+                        "reload",
+                }
 
                 if action not in allowed_actions:
                         return False, f"Unsupported service action: {action}"
 
-                if shutil.which("systemctl") is None:
-                        return False, "systemctl is unavailable."
+                systemctl = shutil.which("systemctl")
 
-                result = subprocess.run(
-                        ["systemctl", action, self.service_name],
-                        capture_output=True,
-                        text=True,
-                        check=False,
-                )
+                if systemctl is None:
+                        return False, "systemctl is not installed."
 
-                output = "\n".join(
-                        part
-                        for part in (result.stdout, result.stderr)
-                        if part
-                )
-
-                return (
-                        result.returncode == 0,
-                        output or f"systemctl {action} completed.",
+                return False, (
+                        "Service actions are disabled in the unprivileged "
+                        "application. Use the future restricted privileged "
+                        "helper after its security review."
                 )

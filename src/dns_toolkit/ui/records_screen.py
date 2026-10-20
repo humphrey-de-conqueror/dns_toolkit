@@ -1,20 +1,20 @@
 
 from textual.app import ComposeResult
 from textual.containers import Vertical
-from textual.screen import Screen
+from dns_toolkit.ui.navigation_screen import NavigationScreen
 from textual.widgets import Button, DataTable, Static
 
 from dns_toolkit.repositories import ZoneRepository
 from dns_toolkit.ui.zone_details_screen import ZoneDetailsScreen
 
 
-class RecordsScreen(Screen):
+class RecordsScreen(NavigationScreen):
         def __init__(self, zone_repository: ZoneRepository) -> None:
                 super().__init__()
                 self.zone_repository = zone_repository
                 self.zone_names_by_key: dict[str, str] = {}
 
-        def compose(self) -> ComposeResult:
+        def compose_page(self) -> ComposeResult:
                 with Vertical(id="records-page"):
                         yield Static("DNS Records", classes="page-title")
                         yield DataTable(id="records-table")

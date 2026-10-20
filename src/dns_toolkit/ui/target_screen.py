@@ -1,14 +1,14 @@
 
 from textual.app import ComposeResult
 from textual.containers import Vertical
-from textual.screen import Screen
+from dns_toolkit.ui.navigation_screen import NavigationScreen
 from textual.widgets import Button, Select, Static
 
 from dns_toolkit.services.target_service import TargetService
 from dns_toolkit.storage.settings_repository import SettingsRepository
 
 
-class TargetScreen(Screen):
+class TargetScreen(NavigationScreen):
         def __init__(
                 self,
                 target_service: TargetService,
@@ -18,7 +18,7 @@ class TargetScreen(Screen):
                 self.target_service = target_service
                 self.settings_repository = settings_repository
 
-        def compose(self) -> ComposeResult:
+        def compose_page(self) -> ComposeResult:
                 active_target = self.target_service.get_active_target()
                 targets = [
                         (target.name, target.target_id)

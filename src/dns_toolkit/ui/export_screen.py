@@ -3,7 +3,7 @@ from pathlib import Path
 
 from textual.app import ComposeResult
 from textual.containers import Vertical
-from textual.screen import Screen
+from dns_toolkit.ui.navigation_screen import NavigationScreen
 from textual.widgets import Button, Input, Select, Static
 
 from dns_toolkit.repositories import ZoneRepository
@@ -11,7 +11,7 @@ from dns_toolkit.services.export_service import ExportService
 from dns_toolkit.storage.settings_repository import SettingsRepository
 
 
-class ExportScreen(Screen):
+class ExportScreen(NavigationScreen):
         def __init__(
                 self,
                 export_service: ExportService,
@@ -23,7 +23,7 @@ class ExportScreen(Screen):
                 self.zone_repository = zone_repository
                 self.settings_repository = settings_repository
 
-        def compose(self) -> ComposeResult:
+        def compose_page(self) -> ComposeResult:
                 zones = self.zone_repository.list_zones()
                 options = [
                         (zone.name, zone.name)

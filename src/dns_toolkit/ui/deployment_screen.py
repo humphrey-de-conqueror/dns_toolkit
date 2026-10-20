@@ -3,7 +3,7 @@ from pathlib import Path
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.screen import Screen
+from dns_toolkit.ui.navigation_screen import NavigationScreen
 from textual.widgets import Button, Checkbox, Static
 
 from dns_toolkit.repositories import ZoneRepository
@@ -11,7 +11,7 @@ from dns_toolkit.services.deployment_service import DeploymentService
 from dns_toolkit.storage.settings_repository import SettingsRepository
 
 
-class DeploymentScreen(Screen):
+class DeploymentScreen(NavigationScreen):
         def __init__(
                 self,
                 deployment_service: DeploymentService,
@@ -25,7 +25,7 @@ class DeploymentScreen(Screen):
                 self.settings_repository = settings_repository
                 self.plan = None
 
-        def compose(self) -> ComposeResult:
+        def compose_page(self) -> ComposeResult:
                 with Vertical(id="deployment-page"):
                         yield Static(
                                 "Deployment",
@@ -84,6 +84,16 @@ class DeploymentScreen(Screen):
                                 id="deployment-status",
                         )
 
+                        yield Static(
+                                "Privileged helper status has not been checked.",
+                                id="deployment-helper-status",
+                        )
+                        yield Button(
+                                "Check Helper",
+                                id="check-deployment-helper",
+                        )
+
+
         def on_mount(self) -> None:
                 settings = self.settings_repository.load()
 
@@ -99,6 +109,7 @@ class DeploymentScreen(Screen):
                         "prepare-deployment": self.prepare_plan,
                         "validate-deployment": self.validate_plan,
                         "execute-deployment": self.request_deployment,
+                        "check-deployment-helper": self.check_helper,
                         "back-deployment": self.dismiss,
                 }
 
@@ -253,3 +264,15 @@ class DeploymentScreen(Screen):
                         f"{result.message}\n"
                         f"Success: {result.success}"
                 )
+
+        def check_helper(self) -> None:
+                ready, message = self.deployment_service.preflight()
+
+                self.query_one(
+                        "#deployment-helper-status",
+                        Static,
+                ).update(
+                        f"Helper preflight: {'passed' if ready else 'blocked'}\n"
+                        f"{message}"
+                )
+

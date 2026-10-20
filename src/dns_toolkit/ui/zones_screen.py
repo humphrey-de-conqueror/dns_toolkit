@@ -1,7 +1,7 @@
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.screen import Screen
+from dns_toolkit.ui.navigation_screen import NavigationScreen
 from textual.widgets import Button, DataTable, Static
 
 from dns_toolkit.models import Zone
@@ -12,12 +12,12 @@ from dns_toolkit.ui.confirm_screen import ConfirmScreen
 from dns_toolkit.ui.zone_details_screen import ZoneDetailsScreen
 
 
-class ZonesScreen(Screen):
+class ZonesScreen(NavigationScreen):
         def __init__(self, zone_repository: ZoneRepository) -> None:
                 super().__init__()
                 self.zone_repository = zone_repository
 
-        def compose(self) -> ComposeResult:
+        def compose_page(self) -> ComposeResult:
                 with Vertical(id="zones-page"):
                         yield Static("DNS Zones", classes="page-title")
                         yield DataTable(id="zones-table")
