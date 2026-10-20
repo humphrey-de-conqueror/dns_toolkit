@@ -63,7 +63,6 @@ class ZoneDetailsScreen(Screen):
                         yield Input(
                                 value="3600",
                                 id="record-ttl",
-                                input_type="integer",
                         )
 
                         with Horizontal():

@@ -163,7 +163,12 @@ class ZoneRepository:
                                 "Zone storage must contain a JSON object."
                         )
 
-                if payload.get("version") != self.SCHEMA_VERSION:
+                stored_version = payload.get(
+                        "version",
+                        payload.get("schema_version"),
+                )
+
+                if stored_version != self.SCHEMA_VERSION:
                         raise ValueError(
                                 "Unsupported zone storage version."
                         )

@@ -40,7 +40,6 @@ class SettingsScreen(NavigationScreen):
                         yield Static("Default record TTL")
                         yield Input(
                                 id="setting-default-ttl",
-                                input_type="integer",
                         )
 
                         yield Static("", id="settings-message")
